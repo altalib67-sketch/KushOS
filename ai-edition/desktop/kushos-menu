@@ -1,0 +1,5 @@
+#!/bin/sh
+# KushOS start menu — fuzzel, a native C Wayland launcher (glass theme
+# in ~/.config/fuzzel/fuzzel.ini). Lists every app from its .desktop
+# entry; type to search. Starts in a few milliseconds, no runtime.
+exec fuzzel

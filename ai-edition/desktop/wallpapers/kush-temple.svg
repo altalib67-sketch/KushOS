@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800" viewBox="0 0 1280 800">
+  <defs>
+    <linearGradient id="night" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#050d2b"/><stop offset="1" stop-color="#1b3a6b"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="800" fill="url(#night)"/>
+  <!-- stars -->
+  <g fill="#ffffff">
+    <circle cx="120" cy="90" r="3"/><circle cx="300" cy="60" r="2"/><circle cx="520" cy="120" r="3"/>
+    <circle cx="700" cy="70" r="2"/><circle cx="900" cy="100" r="3"/><circle cx="1120" cy="80" r="2"/>
+    <circle cx="200" cy="200" r="2"/><circle cx="820" cy="180" r="2"/><circle cx="1050" cy="220" r="3"/>
+    <circle cx="420" cy="180" r="2"/><circle cx="620" cy="240" r="2"/>
+  </g>
+  <circle cx="1080" cy="140" r="45" fill="#f5ead0"/>
+  <circle cx="1065" cy="130" r="40" fill="#e8d9b0" opacity=".6"/>
+  <!-- temple columns -->
+  <g fill="#c9a25e">
+    <rect x="180" y="300" width="70" height="300"/><rect x="180" y="280" width="90" height="24"/>
+    <rect x="330" y="300" width="70" height="300"/><rect x="320" y="280" width="90" height="24"/>
+    <rect x="480" y="300" width="70" height="300"/><rect x="470" y="280" width="90" height="24"/>
+    <rect x="730" y="300" width="70" height="300"/><rect x="720" y="280" width="90" height="24"/>
+    <rect x="880" y="300" width="70" height="300"/><rect x="870" y="280" width="90" height="24"/>
+    <rect x="1030" y="300" width="70" height="300"/><rect x="1020" y="280" width="90" height="24"/>
+    <rect x="150" y="260" width="980" height="26"/>
+  </g>
+  <!-- hieroglyph band -->
+  <g fill="#8a6a2e" font-family="serif" font-size="34">
+    <text x="200" y="360">𓂀 𓆣 𓋹 𓏏 𓊵 𓂀 𓆣 𓋹</text>
+    <text x="760" y="360">𓊵 𓏏 𓋹 𓆣 𓂀 𓊵 𓏏</text>
+  </g>
+  <rect y="600" width="1280" height="200" fill="#b98a3e"/>
+  <ellipse cx="640" cy="660" rx="500" ry="40" fill="#a3742a"/>
+  <!-- lantern glow -->
+  <circle cx="640" cy="640" r="60" fill="#ffdf8e" opacity=".5"/>
+  <circle cx="640" cy="640" r="28" fill="#ffdf8e"/>
+</svg>
