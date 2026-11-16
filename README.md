@@ -11,8 +11,8 @@ Windows 11 idles at 4–6 GB. KushOS is roughly 2–3% of that.
 
 ## Download | التنزيل
 
-Ready-to-boot disk image (gzip): the link will be added here after
-the KushOS image is uploaded to Google Drive.
+Ready-to-boot disk image (gzip, ~240 MB):
+https://drive.google.com/file/d/1wBa-E9LLm024z2NWKyQwiJDUvpBX1-c-/view?usp=drivesdk
 
 Write it to a USB stick (8 GB+) with Rufus in **DD mode** (or
 `dd`/`balenaEtcher`), then boot from it. On PCs: Legacy/CSM boot
