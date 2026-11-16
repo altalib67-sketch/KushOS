@@ -11,13 +11,14 @@ Windows 11 idles at 4–6 GB. KushOS is roughly 2–3% of that.
 
 ## Download | التنزيل
 
-Ready-to-boot ISO image (~848 MB):
-https://drive.google.com/file/d/1dALvpHdGzuxmTUIa_9B1A7e8ETXhsHsJ/view?usp=drivesdk
+Ready-to-boot ISO image (~881 MB):
+https://drive.google.com/file/d/1630H27Eg-fYPR6gu1oyLUsR7xcTUoD8J/view?usp=drivesdk
 
 Write it to a USB stick (8 GB+) with Rufus in **ISO mode** (or
-`dd`/`balenaEtcher`), then boot from it. On PCs: Legacy/CSM boot
-enabled and Secure Boot disabled. It also runs in any VM
-(QEMU/VirtualBox) — just attach the ISO as a hard disk or CD.
+`dd`/`balenaEtcher`), then boot from it. It boots on both **UEFI**
+(GPT target in Rufus, Secure Boot disabled) and **Legacy BIOS**
+(CSM). It also runs in any VM (QEMU/VirtualBox) — just attach the
+ISO as a hard disk or CD.
 
 Log in as `root` (password `kushos`), then type `desktop` for the
 graphical desktop, or `ai` to start the AI right away.
