@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Setup
+Name[ar]=الإعداد
+Comment=KushOS manual setup: WiFi, wallpaper, sound, brightness, AI
+Comment[ar]=إعداد KushOS اليدوي: واي فاي، خلفية، صوت، سطوع، ذكاء اصطناعي
+Exec=sakura -e setup
+Icon=/usr/share/pixmaps/kushos-setup.svg
+Terminal=false
+Categories=Settings;Utility;
