@@ -93,6 +93,10 @@ install -m755 vol /usr/local/bin/vol
 install -m755 bright /usr/local/bin/bright
 install -m755 shot /usr/local/bin/shot
 install -m755 wallpaper /usr/local/bin/wallpaper
+install -m755 setup /usr/local/bin/setup
+mkdir -p /usr/share/kushos/icons /usr/share/pixmaps
+cp desktop/icons/setup.svg /usr/share/kushos/icons/setup.svg
+cp desktop/icons/setup.svg /usr/share/pixmaps/kushos-setup.svg
 install -m755 desktop/desktop-launcher /usr/local/bin/desktop
 install -m755 desktop/kushos-menu /usr/local/bin/kushos-menu
 
