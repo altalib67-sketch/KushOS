@@ -12,7 +12,7 @@ Windows 11 idles at 4–6 GB. KushOS is roughly 2–3% of that.
 ## Download | التنزيل
 
 Ready-to-boot ISO image (~881 MB):
-https://drive.google.com/file/d/1630H27Eg-fYPR6gu1oyLUsR7xcTUoD8J/view?usp=drivesdk
+https://drive.google.com/file/d/1R7vgsp5wW4_2OOIL52vXW_cT9dbp9lZ8/view?usp=drivesdk
 
 Write it to a USB stick (8 GB+) with Rufus in **ISO mode** (or
 `dd`/`balenaEtcher`), then boot from it. It boots on both **UEFI**
