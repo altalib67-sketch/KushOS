@@ -1,0 +1,184 @@
+#!/bin/sh
+# KushOS Setup — الإعداد اليدوي للنظام.
+#   setup           -> القائمة التفاعلية (واي فاي، خلفية، صوت، سطوع، ذكاء اصطناعي...)
+# يعمل داخل نافذة طرفية (sakura). كل بند يستدعي أوامر KushOS الجاهزة.
+pause() { printf '%s' "اضغط Enter للرجوع..."; read -r _; }
+
+wifi_menu() {
+    clear
+    echo "--- الواي فاي ---"
+    wifi status 2>/dev/null
+    echo
+    wifi
+}
+
+wallpaper_menu() {
+    while true; do
+        clear
+        echo "--- الخلفية ---"
+        echo "الخلفيات المتوفرة:"
+        wallpaper list
+        echo
+        echo "اكتب اسم خلفية، أو next للتبديل، أو Enter للرجوع"
+        printf 'خلفية: '
+        read -r name
+        [ -z "$name" ] && return
+        wallpaper "$name"
+        pause
+    done
+}
+
+vol_menu() {
+    while true; do
+        clear
+        echo "--- الصوت ---"
+        amixer sget Master 2>/dev/null | grep -o '[0-9]*%\|\[on\]\|\[off\]' | head -2
+        echo
+        echo "1) أعلى   2) أخفض   3) كتم/إلغاء الكتم   0) رجوع"
+        printf 'اختيار: '
+        read -r c
+        case "$c" in
+            1) vol up ;;
+            2) vol down ;;
+            3) vol mute ;;
+            0|"") return ;;
+            *) echo "اختيار غير صحيح" ;;
+        esac
+    done
+}
+
+bright_menu() {
+    while true; do
+        clear
+        echo "--- السطوع ---"
+        brightnessctl -m 2>/dev/null | cut -d, -f4
+        echo
+        echo "1) أعلى   2) أخفض   0) رجوع"
+        printf 'اختيار: '
+        read -r c
+        case "$c" in
+            1) bright up ;;
+            2) bright down ;;
+            0|"") return ;;
+            *) echo "اختيار غير صحيح" ;;
+        esac
+    done
+}
+
+ai_menu() {
+    clear
+    echo "--- الذكاء الاصطناعي ---"
+    echo "النماذج المثبتة:"
+    ai models 2>/dev/null || echo "(Ollama غير مثبت بعد — اختر نموذج وسيتم تثبيته)"
+    echo
+    echo "1) فتح المحادثة (ai)   2) تثبيت/تغيير نموذج   0) رجوع"
+    printf 'اختيار: '
+    read -r c
+    case "$c" in
+        1) ai ;;
+        2) ai models ;;
+        *) return ;;
+    esac
+    pause
+}
+
+passwd_menu() {
+    clear
+    echo "--- كلمة مرور root ---"
+    passwd
+    pause
+}
+
+disks_menu() {
+    clear
+    echo "--- الأقراص والمساحة ---"
+    disks 2>/dev/null
+    echo
+    df -h
+    pause
+}
+
+net_menu() {
+    clear
+    echo "--- الشبكة ---"
+    wifi status 2>/dev/null
+    echo
+    ip -brief addr
+    echo
+    ip route 2>/dev/null | head -3
+    pause
+}
+
+time_menu() {
+    clear
+    echo "--- الوقت والتاريخ ---"
+    date
+    echo
+    if [ -d /usr/share/zoneinfo ]; then
+        echo "المنطقة الحالية: $(cat /etc/TZ 2>/dev/null || readlink /etc/localtime 2>/dev/null || echo '(غير مضبوطة)')"
+        echo "1) Africa/Khartoum   2) Africa/Cairo   3) UTC   0) رجوع"
+        printf 'اختيار: '
+        read -r c
+        case "$c" in
+            1) tz=Africa/Khartoum ;;
+            2) tz=Africa/Cairo ;;
+            3) tz=UTC ;;
+            *) return ;;
+        esac
+        ln -sf "/usr/share/zoneinfo/$tz" /etc/localtime
+        echo "$tz" > /etc/TZ
+        echo "تم ضبط المنطقة على $tz"
+        date
+    else
+        echo "(بيانات المناطق الزمنية غير مثبتة)"
+    fi
+    pause
+}
+
+info_menu() {
+    clear
+    echo "--- معلومات النظام ---"
+    echo "النظام: $(cat /etc/os-release 2>/dev/null | grep '^PRETTY_NAME=' | cut -d= -f2 | tr -d '"')"
+    echo "النواة: $(uname -r)"
+    echo "الجهاز: $(hostname)"
+    echo "المدة: $(uptime | sed 's/.*up *//; s/,.*load.*//')"
+    echo
+    free -m
+    echo
+    df -h / | tail -1
+    pause
+}
+
+while true; do
+    clear
+    echo "================ KushOS — الإعداد ================"
+    echo
+    echo "  1) الواي فاي"
+    echo "  2) الخلفية"
+    echo "  3) الصوت"
+    echo "  4) السطوع"
+    echo "  5) الذكاء الاصطناعي"
+    echo "  6) تغيير كلمة المرور"
+    echo "  7) الأقراص والمساحة"
+    echo "  8) الشبكة"
+    echo "  9) الوقت والتاريخ"
+    echo " 10) معلومات النظام"
+    echo "  0) خروج"
+    echo
+    printf 'اختيار: '
+    read -r choice
+    case "$choice" in
+        1) wifi_menu ;;
+        2) wallpaper_menu ;;
+        3) vol_menu ;;
+        4) bright_menu ;;
+        5) ai_menu ;;
+        6) passwd_menu ;;
+        7) disks_menu ;;
+        8) net_menu ;;
+        9) time_menu ;;
+        10) info_menu ;;
+        0|"") clear; exit 0 ;;
+        *) echo "اختيار غير صحيح"; sleep 1 ;;
+    esac
+done
