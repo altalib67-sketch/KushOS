@@ -39,6 +39,11 @@ graphical desktop, or `ai` to start the AI right away.
 - **Arabic everywhere** — full UTF-8 system, Alt+Shift keyboard
   switching (US ⇄ Arabic), a terminal (sakura/VTE) that shapes
   Arabic correctly, Arabic file names.
+- **Setup | الإعداد** — a manual settings menu: Wi-Fi, wallpaper,
+  sound, brightness, AI models, root password, disks, network,
+  time & timezone, system info. Open it from the ⚙ button in the
+  bottom panel, from the start menu ("Setup / الإعداد"), or type
+  `setup` in a terminal.
 - **Wi-Fi** — `wifi` command (scan → pick → password); firmware for
   Intel / Broadcom / Qualcomm / Realtek / MediaTek adapters.
 - **Files & disks** — PCManFM file manager; `disks` mounts other
