@@ -1,112 +1,76 @@
-# KushOS — AI Edition
+# Kush 1.1 — last-kushos
 
-نظام تشغيل خفيف جدًا مبني على Alpine Linux — يشتغل بالذكاء الاصطناعي
-على أي جهاز، وبيستهلك جزء بسيط من رام ويندوز.
+Kush 1.1 is ReactOS (master, commit `344ebfe5`) with a Sudanese identity and the
+fixes needed to boot on UEFI-only hardware (Acer). **Source only — no ISO in
+this repo.**
 
-A featherweight operating system built on Alpine Linux. It runs AI
-models locally on almost any machine, in a fraction of Windows' RAM.
+## What's in this repo
 
-**Measured (QEMU, 1 GB guest): 83 MB idle · 131 MB full desktop.**
-Windows 11 idles at 4–6 GB. KushOS is roughly 2–3% of that.
+This repo contains **only the files changed from ReactOS master commit
+`344ebfe5`** — the Kush 1.1 modifications. To build the full system:
 
-## Download | التنزيل
+1. Clone ReactOS and check out the base commit:
+   `git clone https://github.com/reactos/reactos.git`
+   `git checkout 344ebfe5`
+2. Copy every file from this repo over the checkout, preserving paths.
+3. Build the 64-bit (amd64) system with RosBE x86_64:
+   `configure.sh` then `ninja bootcd` (Release build with the KUSH-DBG
+   serial traces kept — see below).
+4. Make a GPT USB image (1.5 GB, one EFI System partition, FAT32) and copy
+   `uefildr.efi` to `EFI/BOOT/BOOTX64.EFI`, `freeldr.ini` to the root, and the
+   `reactos` tree. Write it with Rufus in DD mode, UEFI only, Secure Boot off.
 
-Ready-to-boot ISO image (~881 MB):
-https://drive.google.com/file/d/1R7vgsp5wW4_2OOIL52vXW_cT9dbp9lZ8/view?usp=drivesdk
+## Modifications (vs ReactOS master 344ebfe5)
 
-Write it to a USB stick (8 GB+) with Rufus in **ISO mode** (or
-`dd`/`balenaEtcher`), then boot from it. It boots on both **UEFI**
-(GPT target in Rufus, Secure Boot disabled) and **Legacy BIOS**
-(CSM). It also runs in any VM (QEMU/VirtualBox) — just attach the
-ISO as a hard disk or CD.
+- **Sudanese rebrand** — ProductName "Kush 1.1", setup wizard / explorer /
+  desktop & sound schemes renamed ReactOS → Kush, 4 Kush BMP wallpapers
+  (Kush-Meroe default, Kush-Nile, Kush-Nubian, Kush-Temple, 1280x800), boot
+  logo (teal #0D7377 + gold, "Kush 1.1", three pyramids), Lautus accents in
+  Kush teal #0D7377. Internal `SOFTWARE\ReactOS` keys and version 0.4.16
+  left untouched on purpose.
+- **TrapFrame syscall fix** (`ntoskrnl/ke/amd64/traphandler.c`) —
+  `KiSystemCallHandler` computed the trap frame 56 bytes too low (MinGW
+  `_AddressOfReturnAddress()` vs 7 extra callee-saved registers pushed before
+  RBP), corrupting syscall pointer arguments so `ZwAllocateVirtualMemory`
+  returned SUCCESS but left Heap NULL. Fix: `TrapFrame = Thread->TrapFrame;`.
+- **GOP video fallback** (`win32ss/drivers/miniport/vbe/gop.c`, new file) —
+  reads the UEFI GOP framebuffer from the registry
+  (`HARDWARE\DESCRIPTION\System\MultifunctionAdapter\0\DisplayController\0`,
+  "Configuration Data") and `VBEInitialize` tries it FIRST, so the system
+  boots a desktop on UEFI-only hardware (fixes STOP 0xB4). Key detail: a real
+  `CM_PARTIAL_RESOURCE_DESCRIPTOR` is 20 bytes, not 32.
+- **AHCI / storahci** (`drivers/storage/port/storahci/`) — storahci was built
+  but not in the image and not registered; AHCI (PCI CC_0106) was mapped to
+  legacy pciide. Enabled in CMakeLists + `hivesys.inf` + `txtsetup.sif`.
+  Fixed `AhciStartPort` to always issue COMRESET (it only ran when the port
+  was half-running) and extended the DET poll from 30 ms to 500 ms.
+  Fixes STOP 0x7B (INACCESSIBLE_BOOT_DEVICE) on SATA SSDs.
+- **HAL clock** (`hal/halx86/apic/halinit.c`) — added `HalpInitializeClock();`
+  at the end of `HalpInitPhase0` (the kernel hung in the idle loop with no
+  timer interrupt).
+- **Boot fixes** — `boot/freeldr/freeldr/ntldr/arch/amd64/winldr.c`
+  (`MempMapSinglePage` accepts the mapped page for the same frame); build
+  fixes in `sdk/include/asm/asm.inc` and `sdk/include/asm/trapamd64.inc`.
 
-Log in as `root` (password `kushos`), then type `desktop` for the
-graphical desktop, or `ai` to start the AI right away.
+## Known notes
 
-## What works | ما يعمل
+- **Keep the KUSH-DBG serial traces** in `ntoskrnl/mm/ARM3/heap.c`,
+  `virtual.c` and `vadnode.c`. A clean build without them still crashes in
+  `bootvid.dll` `VidBitBlt` (STOP 0x7E) — a timing-sensitive race the traces
+  hide. The traces are serial-only and harmless.
+- **No NVMe driver exists in ReactOS** — NVMe SSDs cannot be supported.
+  SATA (AHCI) is what was fixed.
+- **QEMU cannot fully verify SATA disk detection** (SSTS.DET stays 0 after
+  COMRESET) — the decisive test is on real hardware (Acer). q35 breaks USB
+  boot entirely (0x7B) and is not a usable test platform.
+- The Meroe wallpaper does not appear on the master amd64 desktop (plain
+  blue background) — cosmetic, pending.
 
-- **Local AI (Ollama)** — type `ai`: a menu of models with sizes
-  (0.5B → 8B); the best fit for your RAM is marked. Pick once, it
-  downloads once. One model loaded at a time, auto-unloads after
-  2 minutes idle, zram swap. No account, no cloud, no tracking.
-- **Browser** — NetSurf (very light) for the web + a local Arabic
-  start page; Falkon can be added for heavy sites.
-- **Code editor** — lite-xl, opens instantly.
-- **Desktop (labwc / Wayland)** — glass theme, bottom panel with
-  live volume / battery / network pills, a native C launcher
-  (fuzzel) with search and icons, notifications (mako),
-  on-screen volume/brightness bar, Print-key screenshots.
-- **Arabic everywhere** — full UTF-8 system, Alt+Shift keyboard
-  switching (US ⇄ Arabic), a terminal (sakura/VTE) that shapes
-  Arabic correctly, Arabic file names.
-- **Wi-Fi** — `wifi` command (scan → pick → password); firmware for
-  Intel / Broadcom / Qualcomm / Realtek / MediaTek adapters.
-- **Files & disks** — PCManFM file manager; `disks` mounts other
-  drives (NTFS / FAT / exFAT, read **and write**) under /media.
-  The system disk is a normal writable install — your files,
-  models and settings persist across reboots from USB.
-- **Trash can** — real freedesktop trash: PCManFM's Trash Can plus
-  a terminal command: `trash file`, `trash list`,
-  `trash restore name`, `trash empty`.
-- **Wallpapers** — four Kush-inspired desktops (Meroe pyramids,
-  the Nile at sunset, a Nubian village, a Kushite temple):
-  `wallpaper list`, `wallpaper meroe-pyramids`, `wallpaper next`.
-  SVG sources live in `ai-edition/desktop/wallpapers/`.
-- **Media** — mpv player + ALSA sound out of the box.
+## Status
 
-## Useful commands | أوامر مفيدة
-
-```
-ai              AI chat (first run: pick a model for your RAM)
-wifi            connect to Wi-Fi   (wifi scan|status|off)
-disks           list disks         (disks mount sdb1)
-trash           trash can          (trash list|restore|empty)
-vol up|down     volume             (also the Fn keys)
-shot            screenshot to ~/Pictures (also the Print key)
-desktop         start the graphical desktop from tty1
-wallpaper list  change the desktop wallpaper (wallpaper next)
-```
-
-## Repository layout | ملفات المشروع
-
-```
-ai-edition/
-  AI_GOAL.md          design notes, memory rules, model-by-RAM table
-  setup.sh            installs the whole system onto Alpine Linux
-  ai                  the `ai` launcher script
-  select-model.sh     RAM -> recommended model
-  wifi  disks  trash  vol  bright  shot  wallpaper  system commands
-  kushos-locale.sh   UTF-8 locale profile
-  desktop/            every desktop config, mirrored 1:1 into
-                      ~/.config of the image:
-                      labwc (compositor, keybinds, menus),
-                      waybar (panel), fuzzel (launcher),
-                      mako (notifications), wob (OSD),
-                      sakura (terminal), mpv, applications/,
-                      wallpapers/ (Kush-inspired wallpapers, SVG sources)
-```
-
-## Develop | للتطوير
-
-The image is assembled from a plain Alpine 3.24 rootfs; every
-customisation lives in this repo as a text file:
-
-1. Install Alpine, run `ai-edition/setup.sh` — or unpack any
-   Alpine minirootfs and copy the scripts/configs in.
-2. Scripts go to `/usr/local/bin`, desktop configs to
-   `/root/.config` (see `ai-edition/desktop/`).
-3. Boot it in QEMU and measure: `free -m` is the project's
-   scoreboard. The rule for every change: **prettier is welcome,
-   slower is not** — the full desktop budget is ~130 MB.
-
-Pull requests welcome. Ideas on the roadmap: full GPU support
-(Mesa/Vulkan + AMD firmware), Bluetooth, a first-run wizard, and
-suspend-on-lid-close.
-
-## History note
-
-KushOS began as a from-scratch BIOS kernel with a glass GUI
-(v1.2, booted in 4 MB RAM). That code was removed from this repo
-on 2026-11-16 so the project presents one clear product — the AI
-Edition. The kernel sources remain in the project's local
-archive; the v1.2 notes live in the release package.
+- Last verified image: `kush11-amd64-uefi-ahci.img` (1.5 GB) — GOP works,
+  storahci loads and finds the Intel AHCI controller (VEN 8086 DEV 2922,
+  6 ports), system boots from USB in QEMU/OVMF. Real-hardware Acer test is
+  decisive.
+- If the Acer still gives 0x7B on USB boot: try a USB 2.0 port (xHCI issue)
+  and report the Acer model and SSD type (SATA vs NVMe).
