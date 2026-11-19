@@ -1,7 +1,0 @@
-swaybg -i /usr/share/kushos/wallpaper.png &
-waybar &
-mako &
-rm -f $XDG_RUNTIME_DIR/wob.fifo; mkfifo $XDG_RUNTIME_DIR/wob.fifo; tail -f $XDG_RUNTIME_DIR/wob.fifo | wob &
-sakura -e sh -c 'cat /etc/motd; exec sh' &
-sleep 4
-netsurf file:///usr/share/kushos/welcome.html &
