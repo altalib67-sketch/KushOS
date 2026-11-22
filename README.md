@@ -6,16 +6,18 @@ this repo.**
 
 ## What's in this repo
 
-This repo contains **only the files changed from ReactOS master commit
-`344ebfe5`** — the Kush 1.1 modifications. To build the full system:
+**This repo is the complete Kush 1.1 source tree**: ReactOS master commit `344ebfe5`
+plus every Kush 1.1 modification, so it builds on its own (no separate ReactOS clone).
+(The `.github` CI workflows of ReactOS are intentionally not included.)
 
-1. Clone ReactOS and check out the base commit:
-   `git clone https://github.com/reactos/reactos.git`
-   `git checkout 344ebfe5`
-2. Copy every file from this repo over the checkout, preserving paths.
-3. Build the 64-bit (amd64) system with RosBE x86_64:
-   `configure.sh` then `ninja bootcd` (Release build with the KUSH-DBG
-   serial traces kept — see below).
+**المستودع ده فيه النظام كامل:** كود ReactOS (commit `344ebfe5`) ومعاه كل تعديلات Kush 1.1. بتعمل clone
+للمستودع ده بس وبتبني على طول.
+
+Build (Linux, mingw-w64 **posix** toolchain, cmake, ninja, bison, flex, libgmp-dev):
+
+1. `git clone https://github.com/eltaieb-eltalib/last-kushos.git && mkdir build && cd build`
+2. `cmake -G Ninja -DARCH=amd64 -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=../last-kushos/toolchain-gcc.cmake -DENABLE_CCACHE=0 -DDLL_EXPORT_VERSION=0x600 ../last-kushos`
+3. `ninja bootcd` → `bootcd.iso` (or use RosBE x86_64: `configure.sh` then `ninja bootcd`).
 4. Make a GPT USB image (1.5 GB, one EFI System partition, FAT32) and copy
    `uefildr.efi` to `EFI/BOOT/BOOTX64.EFI`, `freeldr.ini` to the root, and the
    `reactos` tree. Write it with Rufus in DD mode, UEFI only, Secure Boot off.
@@ -68,6 +70,463 @@ This repo contains **only the files changed from ReactOS master commit
   don't slow the race down), while "Live (Debug)" (`/DEBUG /DEBUGPORT=COM1`)
   boots to the Kush 1.1 desktop. Revert to `DefaultOS=LiveImg` once the
   bootvid race is fixed.
+
+## تجربة Firefox 160.0.1 (64-bit) على Kush 1.1 ❌ (محتاج ويندوز 10)
+
+المصدر: `https://ftp.mozilla.org/pub/firefox/releases/160.0.1/win64/en-US/Firefox Setup 160.0.1.exe` (مجاني، 95.8 MB).
+
+| # | الفحص | النتيجة | الحل |
+|---|-------|---------|------|
+| 1 | نوع ملف التثبيت | `Firefox Setup 160.0.1.exe` هو **PE32 (32-bit، i386)، مضغوط بـ UPX** (غلاف NSIS)، يعني Kush الـ 64-bit (ما فيه WoW64) غالبًا حيرفضه زي SPSS | نفك الملف بدل ما نشغّله |
+| 2 | فك الملف بـ `7z x` | ✅ 76 ملف (362 MB)، ومنهم **`core/firefox.exe` بنسخة 64-bit (PE32+ x86-64)**، و `setup.exe` | ننسخ مجلد `core` لـ Kush ونشغّل `firefox.exe` مباشرة |
+| 3 | تشغيل `Firefox Setup 160.0.1.exe` على Kush | ❌ **"Machine Type Mismatch"** (`docs/firefox/01-installer-machine-type-mismatch.png`)، زي ما توقعنا | الفك بـ 7z (الخطوة 2) |
+| 4 | `xcopy /E /I D:\core C:\Firefox` | ✅ 75 ملف اتنسخت | |
+| 5 | تشغيل `C:\Firefox\firefox.exe` | ❌ **"api-ms-win-core-version-l1-1-1.dll was not found"** (`docs/firefox/02-api-ms-win-core-version-missing.png`) | Firefox 160 محتاج ويندوز 10 أو أحدث، وبيستعمل مكتبات "API set" (`api-ms-win-*`) ناقصة في Kush. ⏳ الحل: نضيف الـ API sets الناقصة (forwarders لـ `version.dll` و `kernel32`/`kernelbase`) |
+| 6 | ليه الـ API set ناقص؟ | Kush فيه جدول API sets (`sdk/lib/apisets/apisets.table.c`، 1248 مدخل) وفيه `api-ms-win-core-version-l1-1-1`، لكنه معلّم `APISET_WIN10`. الـ loader (`ntdll/rtl/libsupp.c`، `LdrpApisetVersion`) **بيفعّل الـ API sets بس لما البرنامج مصنّف ويندوز 10** (`RosGetProcessCompatVersion`)، وفايرفوكس بيشتغل بإصدار Kush العادي (NT 5.2) | نشغّله بطبقة التوافق `WIN10RTM` |
+| 7 | `set __COMPAT_LAYER=WIN10RTM` وتشغيل فايرفوكس | ⚠️ تقدّم: الـ API set اتفعّل واتحوّل، لكن لـ `kernel32.dll`، فطلع **"Entry Point Not Found: GetFileVersionInfoSizeW in api-ms-win-core-version-l1-1-1.dll"** (`docs/firefox/03-win10-layer-entry-point-not-found.png`) | في ويندوز 10 الدوال دي في `kernelbase.dll`، وفي Kush مكانها `version.dll`. ⏳ الحل: نحوّل `api-ms-win-core-version-*` لـ `version.dll` في جدول الـ API sets |
+| 8 | فحص كامل لكل الدوال اللي فايرفوكس بيستوردها ومقارنتها بـ Kush (`tools/firefox_api_audit.py`، النتيجة في `docs/firefox/api-audit-firefox160.txt`) | ❌ **الفجوة كبيرة:** 126 دالة ناقصة في `kernel32.dll` (SRW locks، `AddDllDirectory`، thread pool…)، و 32 في `ntdll.dll` (ALPC بتاع الـ sandbox)، و 12 في `advapi32.dll` (ETW، `RegDeleteTreeW`…)، و 8 في `user32.dll` (DPI)، و ~40 API set ما ليها مدخل Win10 في الجدول، و ~13 API set بتتحوّل لمكتبة ما فيها الدالة، و 9 مكتبات ما موجودة أصلًا (`dxgi`، `dcomp`، `mf`، `mfplat`، `coremessaging`، `bcp47langs`، `profapi`، `ktmw32`، `rometadata`) | شوف الاستنتاج تحت |
+
+### خطة تشغيل Firefox 160 نفسه (قيد التنفيذ)
+
+الفحص الذكي (`tools/firefox_api_audit.py`) لأول سلسلة تحميل (`firefox.exe` + `mozglue.dll` + `msvcp140` +
+`vcruntime140`) لقى **97 دالة ناقصة**، من 3 أنواع:
+
+1. **API sets ما معلّمة لويندوز 10** في `apisets.table.c` (synch، file، memory، processthreads، registry،
+   security، sysinfo، version، winrt-string…)، فما بتتفعّل حتى بطبقة `WIN10RTM`.
+2. **API sets بتتحوّل للمكتبة الغلط:** registry و security لازم يمشوا لـ `advapi32.dll`، و version لـ
+   `version.dll`، و winrt و winrt-string لـ `combase.dll`.
+3. **دوال `kernel32`/`ntdll` الحديثة:** اكتشاف مهم: **معظمها موجود في الكود ومخفي.** `kernel32.spec`
+   و `ntdll.spec` معلّمين `AcquireSRWLockExclusive` و `CompareStringEx` و `CreateThreadpoolWork`
+   و `GetTickCount64` و `RtlAcquireSRWLockExclusive`… بـ `-version=0x600+`، و Kush اتبنى بـ
+   `DLL_EXPORT_VERSION=0x502` (ويندوز 2003). ReactOS عنده "وضع NT6" بيصدّر الدوال دي مباشرة.
+   الدوال اللي ما موجودة في أي مكان لسه: `CreateFile2`، `CopyFile2`، `CreateEventExW`،
+   `CreateSemaphoreExW`، `WaitOnAddress`/`WakeByAddress*`، `SetDefaultDllDirectories`،
+   `*ProcThreadAttributeList`، `Get/SetProcessMitigationPolicy`، `SetThreadInformation`،
+   `QueryUnbiasedInterruptTime(Precise)`، `RtlQueryPerformanceCounter`، `Wer*RuntimeExceptionModule`…
+
+**الخطوات:**
+- **أ.** ✅ بناء Kush بـ `DLL_EXPORT_VERSION=0x600` (Vista): `cmake ... -DDLL_EXPORT_VERSION=0x600` ثم
+  `ninja bootcd`، **نجح بالكامل** (ISO 340 MB) مع تعديلات ب و ج و د. مشاكل البناء اللي ظهرت واتحلّت:
+  تعارض `CopyFile2` مع التعريف الرسمي (بقى بيستعمل `COPYFILE2_EXTENDED_PARAMETERS`)، و 4 دوال طلعت
+  موجودة أصلًا في `kernel32` (`CreateWaitableTimerExA/W`، `FlushProcessWriteBuffers`،
+  `GetCurrentPackageId`) فاتشالت من `kush_win8.c`.
+- **ب.** ✅ تصليح `sdk/lib/apisets/apisets.table.c`: علامة `APISET_WIN10` اتضافت لـ **332** API set كانت
+  Win7/8/8.1 بس (ويندوز 10 بيدعمها)، و **9** اتحوّلت للمكتبة الصحيحة (registry و security و sddl ←
+  `advapi32`، و version ← `version.dll`، و winrt و winrt-string و winrt-error ← `combase.dll`، و psapi ←
+  `psapi.dll`)، واتضاف `api-ms-win-core-libraryloader-l1-2-1` و `api-ms-win-core-realtime-l1-1-1`.
+  الجدول لسه مرتّب (1111 مدخل، فحص الترتيب بيمر).
+- **ج.** ⏳ كتابة الدوال الما موجودة (الكود اترفع، البناء والتجربة جاريين):
+  - `dll/win32/kernel32/kush/kush_win8.c` (جديد): **31 دالة** ويندوز 7/8/10 مبنية على دوال Kush الموجودة:
+    `CreateFile2`، `CopyFile2`، `CreateEventExW/A`، `CreateWaitableTimerExW/A`، `SetWaitableTimerEx`،
+    `WaitOnAddress`، `WakeByAddressSingle/All`، `TryAcquireSRWLockShared`، `SetDefaultDllDirectories`،
+    `AddDllDirectory`، `RemoveDllDirectory`، `Initialize/Update/DeleteProcThreadAttributeList`،
+    `Get/SetProcessMitigationPolicy`، `Get/SetThreadInformation`، `SetFileInformationByHandle`،
+    `GetLogicalProcessorInformationEx`، `FlushProcessWriteBuffers`، `GetCurrentPackageFullName/Id`،
+    `QueryUnbiasedInterruptTime(Precise)`، `QueryInterruptTimePrecise`، `Wer(Un)RegisterRuntimeExceptionModule`.
+    الحاجات الما موجودة في Kush أصلًا (packages، mitigation policies، WER) بترجع نفس نتيجة ويندوز لما
+    الخاصية مقفولة.
+  - `kernel32.spec`: الدوال الجديدة بتتصدّر، و **68 دالة** فايرفوكس محتاجها والكود بتاعها موجود اتشال منها
+    شرط الإصدار (SRW locks، thread pool، `InitOnce*`، `CompareStringEx`، `GetTickCount64`،
+    `GetSystemTimePreciseAsFileTime`، `K32EnumProcessModules`…).
+  - `ntdll.spec` + `rtl/libsupp.c`: `RtlTryAcquireSRWLockExclusive` اتصدّرت، واتكتبت
+    `RtlQueryPerformanceCounter` و `RtlQueryPerformanceFrequency`.
+  - البناء بـ `DLL_EXPORT_VERSION=0x600` (Vista) عشان دوال `-version=0x600+` تتصدّر.
+- **د.** ✅ تصنيف فايرفوكس كويندوز 10 تلقائيًا:
+  - `sdk/tools/xml2sdb`: دعم `<LAYER_REF NAME="..."/>` جوّا `<EXE>` (بيكتب `TAG_LAYER` + `TAG_NAME`،
+    و `apphelp` بيحلّه بالاسم في `SdbpAddExeLayers`).
+  - `media/sdb/sysmain.xml`: `firefox.exe` و `plugin-container.exe` و `crashreporter.exe` ← طبقة
+    `WIN10RTM` (بتبلّغ عن NT 10.0 وبتفعّل API sets بتاعة ويندوز 10 في الـ loader).
+- **هـ.** ✅ نفس الشي لـ `xul.dll` (المحرك). الفحص على البناء الجديد لقى 32 دالة ناقصة، واتكتبت كلها:
+  - `apisets.table.c`: بعض الأسماء في الجدول بحروف مختلطة (`api-MS-Win-Security-Base-L1-1-0`)، فاتصلّحت
+    المقارنة: security-base ← `advapi32`، و psapi ← `kernel32` (فيها `K32*`)، و path ← `kernelbase_ros`
+    (فيها `PathCch*`)، و shcore-scaling ← `shcore.dll`.
+  - `kush_win8.c` (دورة 2): `GetOverlappedResultEx`، `PowerCreate/Set/ClearRequest`، `ResolveLocaleName`،
+    `GetCurrentApplicationUserModelId`، `GetSystemCpuSetInformation`، و forwarders في `kernel32.spec`:
+    `OpenProcessToken`/`OpenThreadToken`/`SetThreadToken` ← `advapi32`.
+  - `dll/win32/advapi32/kush/kush_etw.c` (جديد): ETW (`EventRegister`، `EventWrite`، `EventWriteTransfer`،
+    `EventWriteEx`، `EventSetInformation`، `EventUnregister`، `EventEnabled`، `EventProviderEnabled`،
+    `EventActivityIdControl`)، و `RegCreateKeyTransactedW`/`RegOpenKeyTransactedW` (من غير transaction).
+  - `sdk/lib/rtl/amd64/dynfntbl.c`: `RtlAddGrowableFunctionTable` و `RtlGrowFunctionTable` و
+    `RtlDeleteGrowableFunctionTable` (محتاجها JIT بتاع JavaScript لتسجيل unwind data)، ومتصدّرة من `ntdll`.
+  - `dll/win32/cfgmgr32/kush_cm.c`: `CM_Register_Notification`/`CM_Unregister_Notification`.
+  - `dll/win32/ktmw32/` **(مكتبة جديدة)**: `CreateTransaction`، `CommitTransaction`، `RollbackTransaction`.
+  - ✅ **البناء نجح، والفحص (`tools/firefox_load_chain_audit.py`) ما لقى أي دالة ناقصة** في سلسلة
+    تحميل `firefox.exe` ولا `xul.dll`.
+- **و.** ⏳ التجربة الفعلية في Kush: نقلت مكتبات البناء الجديد (653 ملف `.dll`/`.exe` في `system32`) و
+  `AppPatch/sysmain.sdb` لنظام التجربة، وشغّلت `C:\Firefox\firefox.exe` **من غير أي `set`**:
+  - ✅ **فايرفوكس اتحمّل بكل مكتباته**: ما في "DLL not found" ولا "Entry Point Not Found"، وطبقة ويندوز 10
+    اتطبّقت تلقائيًا من قاعدة التوافق (`ShimInfo(Exe(firefox.exe))`)، والبرنامج بدأ يشتغل (نادى
+    `SetProcessDpiAwareness(2)`، ودي لسه stub في Kush).
+  - ❌ بعدها **access violation** (`0xC0000005`) في العنوان `0x0E22EF77` والبرنامج قفل.
+  - **التشخيص:** breakpoint بـ gdb على `ntdll!KiUserExceptionDispatcher`، وقريت قائمة المكتبات من الـ PEB
+    (عن طريق `GS` = TEB بتاع فايرفوكس): الخطأ في **`xul.dll` (المحرك)، RVA `0x19EF77`**، تعليمة
+    `incl 0xa8(%rsi)` و `rsi` فاضي. نزّلت رموز Mozilla الرسمية لنفس النسخة (`symbols.mozilla.org`،
+    `xul.pdb/FD70672AC9C2F0394C4C44205044422E1/xul.sym`): الدالة هي
+    **`mozilla::profiler::ThreadRegistration::RegisterThread`** (`ProfilerThreadRegistration.cpp`، سطر 128)،
+    وبتستعمل متغيرات **`thread_local` (TLS)**.
+  - **السبب الجذري في Kush:** `xul.dll` بيتحمّل **وقت التشغيل** بـ `LoadLibrary`. الـ loader في Kush
+    (`dll/ntdll/ldr/ldrinit.c`) بيجهّز الـ TLS **مرة واحدة بس وقت بداية البرنامج** (`LdrpInitializeTls`)،
+    فأي مكتبة فيها TLS بتتحمّل بعد كده ما بتاخد index ولا ذاكرة، والمؤشر بيطلع NULL. ويندوز من Vista بيدعم
+    ده (**dynamic TLS**).
+  - **التصليح (`dll/ntdll/ldr/ldrinit.c`):**
+    - `LdrpHandleDynamicTls` (جديد): لما مكتبة فيها `IMAGE_TLS_DIRECTORY` تتحمّل بعد بداية البرنامج، بتاخد
+      index جديد في `LdrpTlsList`، و **كل thread شغّال** في البرنامج (من `NtQuerySystemInformation`
+      ← `NtOpenThread` ← TEB) بيتكبّر جدول الـ TLS بتاعه وبتتعمل ليه نسخة من بيانات المكتبة. الـ threads
+      الجديدة بتاخدها تلقائيًا في `LdrpAllocateTls`.
+    - الـ TLS callbacks بتتنادى كمان للمكتبات اللي بتتحمّل وقت التشغيل.
+    - **باق تاني اتصلّح:** `LdrpAllocateTls` كان بيحجز حجم البيانات الأولية بس من غير `SizeOfZeroFill`،
+      يعني متغيرات `thread_local` اللي قيمتها الأولية صفر ما كانت بتاخد ذاكرة. هسي بيحجز الحجم الكامل
+      ومصفّر.
+    - ✅ التجربة: **ما في access violation تاني**، فايرفوكس عدّى `RegisterThread` وكمّل لقدام، ووصل لدوال
+      لسه **stubs** في Kush (`CreateWaitableTimerExW`، `CancelIoEx`)، وبعدها قفل براهو (`tasklist` ما فيه).
+  - **دورة الـ stubs:** فحص كل الدوال المعلّمة stub في Kush وفايرفوكس بيستعملها: 9 في `kernel32`،
+    و 11 في `ntdll` (ALPC للـ sandbox، `NtCancelIoFileEx`، `NtRemoveIoCompletionEx`)، و `RegRenameKey`،
+    و `GetDpiForMonitor`/`SetProcessDpiAwareness` في `shcore` (الـ stub بيرجع نجاح من غير ما يملأ الـ DPI).
+    - `kush_win8.c` (دورة 3): نسخ حقيقية لـ `CreateWaitableTimerExW/A` (القديمة طلعت stub)، `CreateMutexExW`،
+      `CancelIoEx` (بـ `NtCancelIoFile`)، `CancelSynchronousIo`، `CallbackMayRunLong`،
+      `GetQueuedCompletionStatusEx`، `GetDynamicTimeZoneInformation`، `GetTimeZoneInformationForYear`،
+      `RaiseFailFastException`، `SetThreadErrorMode`.
+    - `dll/win32/shcore/kush_dpi.c` (جديد): `GetDpiForMonitor` (96 DPI)، `SetProcessDpiAwareness`،
+      `GetProcessDpiAwareness`، `GetScaleFactorForMonitor` (100%).
+    - ❌ التجربة الأولى: السجل لسه بيقول `WARNING: calling stub CreateWaitableTimerExW()`.
+      **السبب:** `kernel32.spec` كان فيه السطر القديم `@ stub -version=0x600+ CreateWaitableTimerExW` **و**
+      السطر الجديد مع بعض، فالاسم اتصدّر مرتين (ordinal 174 و 1267) واللودر بيلقى الـ stub الأول.
+      نفس المشكلة كانت في `CreateWaitableTimerExA` و `SetFileInformationByHandle` و `FlushProcessWriteBuffers`.
+    - ✅ **الحل:** سكربت بيلقى كل اسم مكرر في الـ spec ويشيل سطر الـ `@ stub` (4 أسطر)، و
+      `FlushProcessWriteBuffers` طلعت ما متعرّفة أصلًا (كانت شغالة بالـ stub بس)، فاتضافت في `kush_win8.c`.
+    - ✅ التجربة التانية: الـ stub اختفى، وفايرفوكس مشى لقدام: شغّل `crashhelper.exe`، ووصل لـ COM
+      (`NetworkListManager`) و WinRT (`Windows.UI.ViewManagement.UISettings`)، يعني محرك XPCOM اشتغل.
+      لكنه لسه بيقفل، و`start /wait` بيرجّع **كود الخروج 128**.
+  - **تحقيق كود 128:**
+    | # | الفحص | النتيجة |
+    |---|---|---|
+    | 1 | gdb على `KiUserExceptionDispatcher` | ولا exception في فايرفوكس، فالشكل كأنه بيقفل براهو |
+    | 2 | gdb على `NtTerminateProcess` و `RtlExitUserProcess` | فايرفوكس ما نادى أي واحدة منهم. اللي نادى **`csrss.exe`**: `NtTerminateProcess(handle, 0x80)` |
+    | 3 | قراءة `subsystems/csr/csrsrv/api.c` | `0x80` = `STATUS_ABANDONED`. csrss بيقتل العملية لما تجيه رسالة `LPC_EXCEPTION`، يعني **exception ما اتعالج وصل للفرصة التانية** |
+    | 4 | طباعة تشخيصية في الكيرنل (`ntoskrnl/ke/amd64/except.c`: `KUSH-EXC`) لكل exception في user mode يوصل للفرصة التانية | `firefox.exe ... second-chance code c06d007f at kernel32!RaiseException` |
+    | 5 | `0xC06D007F` = فشل **delay-load** (دالة بتتحمّل وقت أول استدعاء). الكيرنل بقى يطبع الاسم من `DelayLoadInfo` | **`iphlpapi.dll!NotifyIpInterfaceChange` not found** (خدمة مراقبة الشبكة في فايرفوكس) |
+    | 6 | أداة جديدة `tools/firefox_delayload_audit.py`: بتقرأ جداول الـ delay-import في كل ملفات فايرفوكس وتقارنها بـ Kush | 26 دالة ناقصة في 8 مكتبات |
+  - ✅ **الحل (كل الـ 26):**
+    - `iphlpapi/kush_iphlp.c`: `NotifyIpInterfaceChange`، `NotifyUnicastIpAddressChange`، `NotifyRouteChange2`،
+      `CancelMibChangeNotify2`، `GetIpInterfaceTable`، `FreeMibTable` (التسجيل بينجح، والإشعار الأولي بيتبعت من thread).
+    - `user32`: 9 دوال لمس كان كودها موجود في `user32_vista` لكن مقفولة بـ `-version` اتفتحت، و
+      `kush/kush_touch.c` فيه `GetAutoRotationState` و `GetPointerFrameTouchInfo` و `InjectSyntheticPointerInput`.
+    - `uxtheme/kush_panning.c`: `Begin/Update/EndPanningFeedback`.
+    - `shell32`: فتح `SHGetKnownFolderItem` و `Get/SetCurrentProcessExplicitAppUserModelID`، و `SHGetPropertyStoreForWindow` جديدة.
+    - `userenv/kush_appcontainer.c`: `DeriveAppContainerSidFromAppContainerName` (بيرجّع `E_NOTIMPL`، والـ sandbox بيكمّل من غير AppContainer).
+    - `advapi32`: `AddMandatoryAce` حقيقية (بتبني `SYSTEM_MANDATORY_LABEL_ACE`).
+    - `shlwapi`: `IsOS` بقت بتتصدّر بالاسم، مش بالرقم بس.
+    - النتيجة: الأداة ما بتلقى أي دالة ناقصة في `xul.dll` و `firefox.exe`. الباقي في مكتبات Windows App SDK
+      (`Microsoft.UI.*`) بس، وفايرفوكس ما بيحتاجها في التشغيل العادي.
+    - ✅ التجربة: فايرفوكس عدّى مرحلة الشبكة (`ws2_32`، `WSCGetProviderInfo`) ووصل لـ session restore.
+  - **دورة 4: stubs العادية (`@ stub`):** دي بترمي exception `0x80000100` ما بيتلغى، فقتلت فايرفوكس في
+    `GetApplicationRestartSettings`. فحص كل الـ stubs اللي فايرفوكس بيستوردها طلّع 6 في `kernel32`، واتكتبت كلها:
+    `GetApplicationRestartSettings`، `UnregisterApplicationRestart`، `FreeLibraryWhenCallbackReturns`،
+    `GetNamedPipeServerProcessId`، `QueryProcessCycleTime`، `QueryThreadCycleTime`. ✅ التجربة: عدّاها.
+  - **دورة 5: Rust panic:** الكيرنل طلّع `0x80000003` (breakpoint) في `xul.dll +0x6615f91`. أداة جديدة
+    (`tools/breakpad_sym.py` مع رموز Mozilla) وضّحت إنها `RustMozCrash`. وبما إن سبب الـ crash بيكون في `r8`
+    وقت الـ `int3`، الكيرنل بقى يطبعه:
+    **`system time before Unix epoch: SystemTimeError(11644473600s)`**.
+    - السبب: `GetSystemTimePreciseAsFileTime` في `kernel32/client/time.c` كانت `STUB;` بس، يعني بترجع من غير
+      ما تكتب الوقت، فـ Rust (`SystemTime::now()`) لقى الوقت 0 (سنة 1601).
+    - فحص كل دوال kernel32 اللي جسمها `STUB` وفايرفوكس بيستوردها: `GetSystemTimePreciseAsFileTime`،
+      `ReOpenFile`، `RegisterApplicationRestart`.
+    - ✅ الحل: `GetSystemTimePreciseAsFileTime` بقت بترجع وقت النظام. `ReOpenFile` بقت حقيقية
+      (`NtCreateFile` نسبةً للـ handle الأصلي، ولو فشل بيعمل `DuplicateHandle`). `RegisterApplicationRestart` بقت بترجع `S_OK`.
+    - ✅ **التجربة: Firefox 160 فتح على Kush!** نافذة "Welcome to Firefox" ظهرت بالتبويبات وشريط الأدوات
+      (`docs/firefox/10-firefox160-welcome-window.png`).
+  - **دورة 6: رسالة "ReactOS - no 3D acceleration":** فايرفوكس بيجرّب Direct3D (`wined3d`)، وما في OpenGL ICD
+    في QEMU، فبتظهر رسالة تحذير. الرسالة بتظهر مرة في كل process، ففايرفوكس (بالـ GPU process بتاعه) كان بيطلّعها كل مرة.
+    - ✅ `dll/directx/wine/wined3d/adapter_gl.c`: الرسالة بقت بتظهر **مرة واحدة لكل مستخدم**
+      (`HKCU\Software\Kush\No3DWarningShown`).
+    - الرسالة اختفت، لكن فايرفوكس بقى بطيء جدًا وما بيستجيب للضغط.
+  - **دورة 7: loop في الرسوميات (على مستوى النظام):**
+    | # | الفحص | النتيجة والحل |
+    |---|---|---|
+    | 1 | السجل | `Failed to initialise output \\.\DISPLAY1` بيتكرر ~32 مرة في الثانية |
+    | 2 | `gdi32_vista/d3dkmt.c` | ✅ handles الـ D3DKMT المحاكية كانت في جدول 16 خانة بيتملي (handles ما بتتقفل)، وبعدها كل فتح بيفشل. بقت **stateless** (رقم الشاشة جوه الـ handle)، فما بتخلص أبدًا |
+    | 3 | بعدها | `Required extension ARB_fragment_shader is not supported` بيتكرر (Mesa software ما فيه OpenGL كافي) |
+    | 4 | stack بـ gdb و رموز Mozilla | `D3DVsyncSource::VBlankLoop → DeviceManagerDx::GetOutputFromMonitor → EnsureFactoryLocked`: إنشاء DXGI factory بيفشل، ففايرفوكس بيعيده مع **كل vblank** |
+    | 5 | `wined3d/directx.c` | ✅ لو OpenGL ما صالح، wined3d بيرجع لـ adapter **no-3D** بدل ما يفشل، فالـ DXGI factory بينجح ويتحفظ. ده بيفيد أي برنامج DXGI/Direct3D على جهاز من غير تسريع 3D |
+  - **دورة 8: كل التعديلات بقت على مستوى النظام (طلب المستخدم):** شلنا كل الحاجات الخاصة بفايرفوكس:
+    - ❌ اتشال سطر `firefox.exe`/`plugin-container.exe`/`crashreporter.exe` من `sysmain.xml` (طبقة WIN10RTM).
+    - ❌ اتشالت ملفات `policies.json` و `defaults/pref/kush.js`.
+    - ✅ **السبب الحقيقي:** النظام بيختار **أقل** إصدار في `supportedOS` من الـ manifest، وفايرفوكس بيكتب من Vista لحد
+      Win10، فاتصنّف Vista، والـ API sets كانت مقفولة لـ Vista. الحل في `ntdll/rtl/libsupp.c`: **API sets بتتفعل لكل
+      البرامج**. ده آمن، لأن أسماء `api-ms-*` بتتطبق بس على البرامج اللي بتطلبها.
+    - ❌ التجربة الأولى: `api-ms-win-core-version-l1-1-1.dll was not found`
+      (`docs/firefox/12-system-wide-apiset-win7-subset.png`). **السبب:** الـ manifest بتاع Firefox 160 بيبدأ من
+      **Win7** مش Vista، فالنظام فعّل جدول Win7 بس، والعقد `version-l1-1-1` خاص بـ Win8+.
+    - ✅ **الحل:** `LdrpApisetVersion` بقت بترجع **جدول Win10 دايمًا لكل البرامج**، وده بيشمل كل عقود Win7/8/8.1.
+    - ✅ **التجربة التانية: Firefox 160 فتح بتعديلات النظام بس**، من غير shim أو ملفات إعدادات خاصة بيه، وloop
+      الرسوميات اختفى (`docs/firefox/13-firefox160-system-wide-only.png`).
+  - **دورة 9: مكتبة C (ucrtbase) فيها دوال رياضية بترجع 0:** الضغط على "Continue" ما بيستجيب، والسجل فيه
+    `calling stub lround(100.000000)` و `cbrtf(...)` و `fegetround()`.
+    - فحص: **65 دالة** C99 (رياضيات و`<fenv.h>`) كانت `-stub` في `ucrtbase.spec`، يعني بترجع 0
+      (`lround(100.0) = 0`، `cbrtf(x) = 0`، `rint`، `fmax`، `copysign`، `log1p`، `erf`، `tgamma`…). ده بيأثر على
+      **أي برنامج حديث** مبني بـ Visual Studio 2015+.
+    - ✅ الحل: `dll/win32/ucrtbase/kush_math.c`: تنفيذ حقيقي للـ 65 دالة (rounding بيحترم وضع التقريب الحالي،
+      وerf بـ series وكسر متصل، وgamma بـ Lanczos، وfenv على MXCSR). اتبنت بـ `-fno-builtin` عشان GCC ما يحوّلها
+      لاستدعاء نفسها.
+    - ✅ اختبار الدقة ضد glibc libm (`tools/ucrt_math_test.c`): أسوأ خطأ نسبي **6e-14**، و`lround(100)=100`.
+    - ✅ التجربة في فايرفوكس: كل تحذيرات الدوال الرياضية (`lround`، `cbrtf`، `fe*`) اختفت من السجل، وما فاضل غير
+      `WSCGetProviderInfo` (معلومات Winsock، مش ضرورية). فايرفوكس فتح عادي (`docs/firefox/14-firefox160-after-ucrt-math.png`).
+    - زر "Continue" ما بيستجيب، واتحقق فيه في الدورة 10.
+  - **دورة 10: فتح Google والبحث عن "السودان" (2026-11-22):**
+    | # | المشكلة | الفحص | السبب الجذري | الحل |
+    |---|---|---|---|---|
+    | 1 | الـ VM ما بيوصل للإنترنت | `curl` من بيئة البناء: الوصول المباشر مقفول، وبيشتغل بس عن طريق proxy `127.0.0.1:35723` | البيئة السحابية بتسمح بالخروج عن طريق proxy بس | **proxy النظام** في Kush (إعدادات الإنترنت في الـ registry: `ProxyServer=10.0.2.2:35723`، `ProxyEnable=1`)، وفايرفوكس بياخده تلقائيًا. الـ proxy بيمرر google.com بشهادة Google الأصلية، فما محتاجين شهادة إضافية. ده إعداد تجربة جوه الـ VM بس |
+    | 2 | 8 جيجا رام: شاشة زرقاء `0x7B INACCESSIBLE_BOOT_DEVICE` | `serial.log` | Kush ما بيقدر يقرأ القرص لما الرام تعدي 4GB (DMA مع الذاكرة العالية) | الحد الآمن 3GB. ⏳ **bug مفتوح في النظام** (session التصميم وثّقت نفس المشكلة) |
+    | 3 | 3.5GB و 4 أنوية: شاشة زرقاء `0xC000021A` | ملفات النظام في القرص طلعت سليمة | الغالب إن Kush ما ثابت مع 4 أنوية | الرجوع لـ 3GB وأنويتين |
+    | 4 | الأنوية الزيادة ما بتسرّع | `top -H` على QEMU: نواة واحدة 100% والتانية 0% | الكيرنل اللي بيقلع هو نسخة **المعالج الواحد** (`ntoskrnl.exe`) | ⏳ تشغيل `ntkrnlmp.exe` بثبات = سرعة أكبر لكل البرامج |
+    | 5 | فايرفوكس: process واحدة بس، وصفحات الويب ما بتفتح | `tasklist` | الـ **sandbox** بتاع فايرفوكس ما بيقدر يشغّل الـ content processes على Kush | للتجربة: `MOZ_DISABLE_*_SANDBOX=1`، واشتغلت **9 content processes** وفتح تبويب Google. ⏳ الحل الحقيقي في النظام: restricted tokens، job objects، وalternate desktop |
+    | 6 | الواجهة كلها معلّقة (فايرفوكس، شريط المهام، وحتى زر تصغير cmd) | **عينات RIP** من QEMU (`info registers`، 4767 عينة): 91% في الكيرنل `NtYieldExecution` و`KeSetEvent`، وعينات user mode في **`WinUtils::WaitForMessage`** (برموز Mozilla) | **bug في win32k:** علامات الرسائل (`fsWakeBits`) بتتحسب بعدّادات، ولما العدّاد يخرج عن المزامنة الـ bit بيفضل مرفوع من غير رسالة. `MsgWaitForMultipleObjectsEx(MWMO_INPUTAVAILABLE)` بترجع على طول، و`PeekMessage` ما بيلقى حاجة، والبرنامج بيعمل `SwitchToThread` ويعيد → **livelock** | `win32ss/user/ntuser/message.c`: `IntResyncQueueWakeBits`: لما `PeekMessage` من غير فلتر ما يلقى أي رسالة، بيمسح كل bit ما وراه رسالة حقيقية (posted، sent، hardware، paint، timer). ده **على مستوى النظام**، وبيفيد أي برنامج بيستعمل النمط ده |
+    - ✅ **التجربة بعد إصلاح win32k:** عينات المعالج اتغيرت تمامًا: `NtYieldExecution` اختفى، والمعالج بقى **فاضي ~88%**
+      (`HalProcessorIdle`). **النظام رجع يستجيب**: قائمة Start بتفتح بالماوس، وقبل الإصلاح حتى زر التصغير ما كان بيشتغل
+      (`docs/firefox/15-after-win32k-fix-start-menu-works.png`).
+    - ❌ **فايرفوكس لسه ما بيستجيب:** الـ main thread **محبوس في انتظار** (المعالج فاضي، والنافذة ما بتتعاد رسمها بعد ما
+      قائمة Start تتقفل: `docs/firefox/16-firefox-main-thread-blocked.png`). الغالب إنه مستني رد متزامن (sync IPC) من
+      content process.
+    - ⏳ **الخطوات الجاية (بالترتيب):**
+      1. stack الـ main thread والـ content processes وهي في الانتظار (gdb + رموز Mozilla) عشان نعرف بيستنوا شنو.
+      2. دعم sandbox فايرفوكس في النظام (restricted tokens، job objects، alternate desktop/winstation)، عشان يشتغل
+         من غير `MOZ_DISABLE_*_SANDBOX`.
+      3. تشغيل كيرنل تعدد المعالجات (`ntkrnlmp.exe`) بثبات، وإصلاح bug الرام فوق 4GB (0x7B)، عشان النظام يبقى أسرع.
+  - **دورة 11: فايرفوكس وصل لـ Google بكلمة "السودان" (2026-11-22):**
+    | # | المشكلة | السبب | الحل |
+    |---|---|---|---|
+    | 1 | نافذة Welcome/شروط الاستخدام قافلة الشاشة | أول تشغيل لفايرفوكس 160 | إعدادات تجربة في `user.js` جوه profile جديد (`browser.preonboarding.enabled=false`، `termsofuse.*`، `browser.aboutwelcome.enabled=false`) + content process واحدة. **إعداد تجربة جوه الـ VM بس، مش جزء من Kush** |
+    | 2 | ملف إعدادات في `C:\Firefox\defaults\pref\` ما اتطبق | فايرفوكس بيقرأ إعدادات الـ browser من `user.js` أو `browser/defaults/preferences` | استعملنا `user.js` |
+    | 3 | `policies.json` (فيه `SkipTermsOfUse` و `Proxy`) خلّى فايرفوكس يقع: access violation في `xul.dll` جوه `_Find_impl` (بحث نصي) في الـ main thread، والقراءة عند حافة صفحة ذاكرة | ⏳ ما اتحدد بالضبط. الغالب في قراءة/تحليل ملف السياسات على Kush | شلنا `policies.json`. ⏳ **محتاج تحقيق في النظام** (قراءة ملفات بحجم معين أو mapping لحد الصفحة) |
+    | 4 | ✅ **فايرفوكس فتح `google.com/search?q=السودان`**: العنوان بالعربي ظاهر صح، والاتصال عدّى الـ proxy | | `docs/firefox/17-firefox-google-sudan-tls-error.png` |
+    | 6 | ❌ الضغط والكيبورد ما بيوصلوا لمحتوى الصفحة (زر "Advanced" ما بيستجيب، و Tab + Enter كمان)، رغم إن الصفحة بتترسم والنافذة نشطة | الـ input من الواجهة (parent) للـ content process ما بيوصل، أو الـ content process ما بيعالجه | ⏳ تحقيق: IPC بين الـ processes (named pipes/ALPC في Kush) |
+    | 7 | إعداد `browser.xul.error_pages.expert_bad_cert` ما عرض تفاصيل الخطأ | التفاصيل محتاجة ضغطة على "Advanced"، وده ما بيشتغل (رقم 6) | ⏳ |
+    | 8 | أداة تشخيص جديدة `tools/kstackdump` (stack كل threads أي process بـ `GetThreadContext` + `ReadProcessMemory`) ما لقت processes فايرفوكس | أسماء الـ processes الراجعة من `Process32First` مقطوعة: `crashhelper.exe` ← `per.exe`، و`[System Process]` ← `Process]` (متزحزحة 8 بايت). **bug في النظام:** `sdk/include/psdk/tlhelp32.h` كان معرّف `th32DefaultHeapID` كـ `DWORD`، وفي Windows هو `ULONG_PTR` (8 بايت على 64-bit). نفس الغلطة في `HEAPLIST32` و`HEAPENTRY32`. يعني **أي برنامج 64-bit مبني لـ Windows** كان بيقرأ معلومات الـ processes والـ heaps غلط من Kush | ✅ تصحيح الـ structs لتطابق Windows، وإعادة بناء kernel32 وtaskmgr وtaskkill وdrwtsn32 وumandlg وwbemprox |
+    | 9 | ليه الـ input ما بيوصل؟ `kstackdump` على فايرفوكس (59 thread) | **الـ main thread محبوس** في `nsFrameLoader::TryRemoteBrowserInternal` ← `ContentParent::GetNewOrUsedBrowserProcess` ← `WaitForSingleObject`: فايرفوكس شغّل content process جديدة **بشكل متزامن** وقاعد منتظرها تتصل بيه، وهي ما بتتصل، فالواجهة كلها واقفة. كمان `GetThreadContext` ما بيرجع لبعض الـ threads في Kush | ⏳ الخطوة الجاية: stack الـ content process الجديدة (وين وقفت في بدايتها). الأداة بقت بتتخطى أي thread ما ترد خلال 3 ثواني |
+    | 10 | `kstackdump` بـ `SuspendThread` **جمّد النظام كله** (الساعة وقفت) | إيقاف thread ماسكة قفل في win32k أو الـ console بيوقف كل البرامج اللي محتاجة القفل ده | الأداة بقت ما بتوقف أي thread (`GetThreadContext` بيشتغل على الـ threads المنتظرة) |
+    | 11 | حتى من غير `SuspendThread`، النظام كله **جمد** (الساعة وقفت) والأداة بتقرأ stack الـ thread التالتة في فايرفوكس بـ `ReadProcessMemory` (`docs/firefox/18-kstackdump-system-freeze.png`) | **deadlock في الكيرنل** في النسخ بين الـ processes (`NtReadVirtualMemory` ← `MmCopyVirtualMemory`)، غالبًا مع الـ address-space lock زي مشاكل Mm اللي اتصلحت قبل كده لـ SPSS. **وده الغالب سبب مشكلة فايرفوكس الأساسية:** فايرفوكس بيكتب في ذاكرة الـ content process الجديدة (`WriteProcessMemory`) قبل ما يشغّلها، فلو النسخ علّق، الـ process الجديدة ما بتبدأ والـ main thread بيفضل منتظرها | ⏳ **الخطوة الجاية:** تحقيق في `ntoskrnl/mm/ARM3/virtual.c` (`MiDoMappedCopy`/`MiDoPoolCopy`، و `KeStackAttachProcess` مع الأقفال) بـ gdb على الكيرنل وقت التجميد، وبعدها إصلاح. ده إصلاح في النظام بيفيد أي برنامج بيستعمل `ReadProcessMemory`/`WriteProcessMemory` (debuggers، launchers، مديري المهام) |
+    | 5 | ❌ صفحة "Security Risk" (HSTS) | الـ proxy بيقدم **شهادة Google الأصلية** (WE2 ← GTS Root R4 ← GlobalSign، اتأكدنا بـ `openssl s_client`)، يعني **التحقق من الشهادة بيفشل جوه Kush** (NSS/التشفير أو الوقت) | ⏳ الخطوة الجاية: رمز الخطأ من "Advanced"، وبعدها إصلاح في النظام |
+
+  #### ملخص مشاكل فايرفوكس اليوم وحلولها (كلها على مستوى النظام)
+
+  | # | المشكلة | السبب الجذري | الحل (الملف) |
+  |---|---|---|---|
+  | 1 | `calling stub CreateWaitableTimerExW` رغم إنها اتكتبت | سطر `@ stub` قديم وسطر جديد لنفس الاسم في الـ spec | شيل 4 stubs مكررة، وإضافة `FlushProcessWriteBuffers` (`kernel32.spec`، `kush_win8.c`) |
+  | 2 | فايرفوكس بيقفل بكود 128 | csrss بيقتله بـ `STATUS_ABANDONED` بسبب exception `0xC06D007F` (فشل delay-load لـ `iphlpapi!NotifyIpInterfaceChange`) | 26 دالة ناقصة في 8 مكتبات (`iphlpapi/kush_iphlp.c`، `user32/kush/kush_touch.c`، `uxtheme/kush_panning.c`، `shell32/kush_shell.c`، `userenv/kush_appcontainer.c`، `advapi32`، `shlwapi`) |
+  | 3 | exception `0x80000100` | `@ stub` العادية بترمي exception ما بيتلغى | 6 دوال في `kernel32` (`GetApplicationRestartSettings`، cycle time…) |
+  | 4 | Rust panic: `system time before Unix epoch` | `GetSystemTimePreciseAsFileTime` كانت `STUB;` بس | كتابتها، ومعاها `ReOpenFile` و `RegisterApplicationRestart` (`kernel32/client`) |
+  | 5 | رسالة "no 3D acceleration" بتتكرر | بتظهر مرة في كل process | مرة واحدة لكل مستخدم (`wined3d/adapter_gl.c`) |
+  | 6 | `Failed to initialise output` آلاف المرات | جدول handles الـ D3DKMT (16 خانة) بيتملي | handles stateless (`gdi32_vista/d3dkmt.c`) |
+  | 7 | فايرفوكس ما بيستجيب | DXGI factory بيفشل (OpenGL ناقص)، والـ vsync بيعيده مع كل vblank | wined3d بيرجع لـ adapter no-3D (`wined3d/directx.c`) |
+  | 11 | أسماء الـ processes غلط لبرامج Windows الـ 64-bit | `tlhelp32.h` بأحجام 32-bit | تعريفات Win64 (`sdk/include/psdk/tlhelp32.h`) |
+  | 10 | الواجهة معلّقة (livelock) | wake bits معلّقة في win32k | `IntResyncQueueWakeBits` (`ntuser/message.c`) |
+  | 9 | `lround(100)=0`، `cbrtf=0` وغيرها | 65 دالة رياضية في ucrtbase كانت `-stub` | تنفيذ حقيقي (`ucrtbase/kush_math.c`)، ودقة 6e-14 |
+  | 8 | فايرفوكس محتاج shim خاص بيه | النظام بيصنّف البرنامج بأقل إصدار في الـ manifest، وجدول الـ API sets بيتبع التصنيف | جدول API sets كامل لكل البرامج (`ntdll/rtl/libsupp.c`)، وشيل سطور فايرفوكس من `sysmain.xml` |
+
+  **أدوات التشخيص اللي اتضافت للنظام وبتنفع أي برنامج:**
+  - `KUSH-EXC` في `ntoskrnl/ke/amd64/except.c`: بيطبع أي exception يوصل للفرصة التانية، والموديول والـ RVA،
+    واسم الـ DLL والدالة لو فشل delay-load، وسبب `MOZ_CRASH` من `r8`.
+  - `tools/firefox_delayload_audit.py`: فحص جداول الـ delay-import لأي برنامج.
+  - `tools/breakpad_sym.py`: تحويل عنوان لاسم دالة بملفات رموز breakpad.
+  - طريقة الشغل مفصلة في `docs/firefox/autonomous-method-2026-11-21.json`.
+
+**الاستنتاج:** Firefox 160 **ما بيشتغل على Kush 1.1 هسي**. هو مبني لويندوز 10 وما فوق (Mozilla وقّفت دعم
+ويندوز 7 و 8 بعد Firefox 115)، و Kush بيقلّد Windows Server 2003 مع جزء من دوال Vista و 7. المشكلة ما
+في مكتبة واحدة، الفجوة **مئات الدوال**.
+
+**طرق الحل:**
+1. **الأسرع (موصى بيه): Firefox ESR 115 بنسخة 64-bit.** آخر نسخة بتدعم ويندوز 7، فبتحتاج دوال أقل بكتير،
+   ومعظمها موجود في `kernel32_vista` و API sets بتاعة Win7 في Kush. الرابط:
+   `https://ftp.mozilla.org/pub/firefox/releases/115.18.0esr/win64/en-US/` (نفس طريقة الفك بـ 7z).
+2. **متوسط:** نصلّح الأشياء السهلة اللي ظهرت في الفحص، وده بيفيد كل البرامج الحديثة مش فايرفوكس بس:
+   - `apisets.table.c`: `api-ms-win-core-version-*` → `version.dll`، و `api-ms-win-core-psapi` → `psapi.dll`،
+     و `api-ms-win-core-path` → `kernelbase`/`shlwapi`، وإضافة علامة `APISET_WIN10` للـ API sets الأساسية
+     (synch، processthreads، libraryloader، file، memory…) اللي معلّمة Win7/8 بس.
+   - تصنيف `firefox.exe` كويندوز 10 تلقائيًا (مدخل في `media/sdb/sysmain.xml`، أو دعم `LAYER_REF` جوّا
+     `EXE` في `xml2sdb` و `apphelp`)، بدل `set __COMPAT_LAYER=WIN10RTM`.
+   - تصدير دوال Vista/7 من `kernel32.dll` (forwarders لـ `kernel32_vista.dll`).
+3. **كبير (أسابيع):** تطبيق بقية دوال ويندوز 10 (ALPC في `ntdll`، و DPI في `user32`، و `dxgi`/`dcomp`،
+   و Media Foundation) عشان النسخ الحديثة زي 160 تشتغل.
+
+## ملخص الحالة (للمتابعة)
+
+| الموضوع | الحالة | المكان في الكود |
+|---------|--------|-----------------|
+| SPSS 25 على Kush | ✅ بيثبت ويفتح ملفات `.sav` ويعمل تحليل (QEMU) | `ntoskrnl/mm/region.c`، `section.c`، `ARM3/virtual.c`، `vadnode.c`، `boot/bootdata/hivesys.inf` (`IBM_JAVA_OPTIONS=-Xint`) |
+| رجفة الماوس | ✅ اتصلّحت في الكود، ⏳ محتاجة تأكيد على جهاز الـ Acer | `drivers/input/i8042prt/mouse.c`، `registry.c` |
+| تعريف NVMe | ✅ القرص بيتعرّف، والتثبيت عليه والإقلاع منه شغّالين (QEMU)، ⏳ التجربة على جهاز حقيقي | `drivers/storage/port/nvme/`، `drivers/storage/port/storport/storport.c`، `fdo.c`، `txtsetup.sif`، `hivesys.inf` |
+| الكيبورد والماوس PS/2 و USB، وكرت الشاشة (VBE/GOP)، و SATA/IDE/USB | ✅ موجودين في النظام من قبل | (ReactOS) |
+| تاتشباد I2C | ❌ ما في تعريف (`hidi2c`) | — |
+
+**الخطوات الجاية بالترتيب:**
+1. ✅ ~~نكمّل تثبيت Kush على قرص NVMe في QEMU ونقلع منه~~ (اتعمل).
+2. نجرب على جهاز الـ Acer: رجفة الماوس، والـ SSD (SATA أو NVMe).
+3. نرجّع الـ JIT بتاع Java (نشيل `-Xint`) بعد ما نعرف سبب الحلقة في `j9jit28.dll`.
+4. نصلّح فتح ملف `.sav` من سطر الأوامر (crash في `MSVCR100.dll`).
+5. تعريف تاتشباد I2C (لو التاتشباد في الـ Acer من النوع ده).
+
+**بيئة البناء والتجربة:** ReactOS `344ebfe5` + ملفات المستودع ده فوقه، `cmake -G Ninja -DARCH=amd64`
+بـ mingw-w64 (نسخة posix)، و `ninja bootcd`. التجربة في QEMU (TCG) بخيار الإقلاع Debug، وأدوات
+التشخيص في `tools/kdbg/`.
+
+**بيئة تجربة Fluent (من 2026-11-22):** المحاكي برام **3072MB (3GB)** وأنويتين
+(`-m 3072 -smp 2` في `tools/qemu/run_vm.sh`) — وهو الإعداد المستقر اللي كان
+شغال قبل كده. (كانت 3072MB ثم 4096MB، واترفعت لـ 5120MB بأمر المستخدم «حط أعلى
+رام متاحة»، ثم رجعت لـ 3072MB بعد نتائج اختبار المستخدم أدناه.)
+**حدود الرام والأنوية — من اختبار المستخدم (2026-11-22)، سُجلت فور وصولها:**
+- **رام 8GB: شاشة زرقاء STOP 0x7B** — Kush ما بيقدر يقرأ القرص لما الرام تعدي
+  **4 جيجا**. ده **bug في النظام** (وليس مشكلة إعدادات)، ويُسجل كعطل معروف
+  يجب إصلاحه — أي إقلاع برام أكبر من 4GB غير مدعوم حاليًا.
+- **رام 3.5GB مع 4 أنوية: شاشة زرقاء 0xC000021A** (STATUS_SYSTEM_PROCESS_TERMINATED).
+  ملفات النظام الأساسية في القرص سليمة، فالأرجح عدم ثبات مع 4 أنوية، **لكن السبب
+  ما اتأكد** بعد — يحتاج تشخيص منفصل.
+- **الإعداد المستقر اللي رجع له المستخدم: 3 جيجا رام وأنويتين**، مع ذاكرة أكبر
+  لمترجم المحاكي (TCG) فقط — أي أن ذاكرة الضيف تفضل 3GB والزيادة للمحاكي نفسه.
+**القاعدة الملزمة من هنا: لا تُرفع الرام فوق 4GB ولا الأنوية لـ 4 من غير اختبار
+منفصل موثق** (إعداد مستقل + screenshot + سجل). ولا تُعطَ المحاكي كل رام الهوست
+(7.7GB) أبدًا لأن الهوست هيتقتل (OOM).
+**تشخيص عطلي الإقلاع 0x1E و0xB4 (2026-11-22) — السبب الجذري واحد: bug الرام
+فوق 4GB، وليس انحدارًا في تغييرات 19–21 نوفمبر.** التجربة الضابطة حاسمة: نفس
+الثنائيات بالضبط (نفس `bootcd.iso`، SHA-256 `7498d242…`) تتعطل عند 5120MB
+وتعمل باستقرار عند 3072MB — تحت OVMF وتحت SeaBIOS على حد سواء، ووصلت لسطح
+مكتب مستقر (الساعة تقدّمت والصور أدناه). لو كان السبب في `except.c` (طباعة
+KUSH-EXC) أو إصلاحات الذاكرة SPSS أو Dynamic TLS أو apisets/wined3d، لتكرر
+العطل عند 3072MB — لم يتكرر، فكلها بريئة من هذا العطل.
+سلسلة عطل 0x1E عند 5120MB (مؤكدة بالسجل وgdb): استثناء وصول (كتابة) في
+`csrss.exe` داخل `usp10.dll+0x20c02` على عنوان بريّ `0x7FED400341B` أثناء
+إنشاء نافذة معالج LiveCD → الكيرنل ينهي العملية الحرجة csrss →
+`PspCatchCriticalBreak` يجد مصحّح الكيرنل مفعّلًا فيطبع `Break, or Ignore
+(bi)?` ويستدعي `DbgBreakPoint()` (int3 في وضع الكيرنل) → bugcheck ‏0x1E.
+وعطل 0xB4 تحت SeaBIOS **ليس سببًا منفصلًا**: عند 3072MB وصل SeaBIOS لسطح
+المكتب دون 0xB4 — فشل `co_IntInitializeDesktopGraphics()` كان عرضًا لنفس فساد
+الذاكرة فوق 4GB، لا عطلًا في مسار VBE/GOP.
+تصحيح تقني: قاعدة الكيرنل وقت التشغيل هي `0xFFFFF80000400000` (وليست
+`0xFFFFF80000000000`) — تصدير `DbgBreakPoint` عند RVA `0x105FA0` يطابق عنوان
+التشغيل `0xFFFFF80000505FA0` فقط بهذه القاعدة.
+**هشاشة ثانوية حقيقية (ليست السبب الجذري، وتستحق إصلاحًا منفصلًا):**
+`PspCatchCriticalBreak` في `ntoskrnl/ps/kill.c:28–70` يحوّل موت عملية حرجة إلى
+‏0x1E مضلِّل بدل 0xF4 المقصود (`CRITICAL_OBJECT_TERMINATION`)، لأنه يقرأ
+`Action[2]` — بفر غير مهيأ في الستاك — ويعتمد عليه؛ إن صادف `'b'` استدعى
+`DbgBreakPoint()`. الإصلاح المقترح (لم يُطبق بعد): تهيئة
+`CHAR Action[2] = {0}`، والتحقق من قيمة إرجاع `DbgPrompt`، واستدعاء
+`DbgBreakPoint()` فقط عند رد `'b'` حقيقي من مصحّح متصل فعلًا، وإلا السقوط على
+`KeBugCheckEx(CRITICAL_OBJECT_TERMINATION, …)`. أما إصلاح bug الـ 4GB نفسه
+(السطر الدقيق في `Mm` لم يُحدد بعد) فيحتاج تحقيقًا مخصصًا وتنصيفًا بحجم الرام
+حول حد 4096MB.
+**صور سطح المكتب المستقر (البناء الجديد، 3072MB، تحققت منها بنفسي):**
+`docs/design/2026-11-22-desktop-stable-3072mb-ovmf.png` (OVMF، الساعة 12:32)
+و`docs/design/2026-11-22-desktop-stable-3072mb-seabios.png` (SeaBIOS، 12:35)
+— أيقونات My Documents وMy Computer وMy Network Places وRecycle Bin وCommand
+Prompt وInstall Kush 1.1 وRead Me، وزر Start وشريط مهام وساعة. والسجلات النظيفة
+(بلا `KUSH-EXC` ولا `Fatal System Error`) في
+`docs/design/2026-11-22-serial-stable-3072mb-ovmf.log` و
+`docs/design/2026-11-22-serial-stable-3072mb-seabios.log`.
+والقرص `~/workspace/kush-vm/k.raw` بحجم **8GB** (ملف sparse، الحجم المنطقي
+8,589,934,592 بايت؛ الهوست فيه 128GB فاضية وقت الإنشاء). التثبيت من
+`bootcd.iso` باختيار Setup، والإقلاع بـ `tools/qemu/run_vm.sh <workdir> k.raw`.
+**سياسة الصور:** screenshot بعد كل خطوة مهمة (بناء، تثبيت، إقلاع، سطح مكتب،
+فتح Start، كل مرحلة) باسم واضح ومؤرخ في `docs/design/`، ولا تُجمع الصور
+لنهاية العمل.
+**هدف التصميم (ردًا على الصورة المرجعية لـ Windows 11):** نفس الروح ونفس التخطيط —
+Start في نص الشاشة، Pinned 6 أعمدة، Recommended تحتها، شريط مهام فاتح شبه شفاف
+بأيقونات في النص — لكن بخلفية **Kush-Flow** وأيقونات وبرامج **Kush الحقيقية**
+وشعار Kush الأصلي. تصميم أصلي مستوحى من Fluent، **مش نسخة طبق الأصل** من
+Windows 11 ولا شعارات أو صور Microsoft.
+**صورة الأساس قبل Fluent:** `docs/design/2026-11-22-baseline-desktop-before-fluent.png`
+— سطح مكتب Kush 1.1 من آخر بناء موثّق (2026-11-18، `344ebfe`): شريط مهام رمادي
+كلاسيكي وزر Start يسارًا، وأيقونات سطح المكتب يسارًا، وخلفية زرقاء سادة
+(خلفية Meroe لا تظهر — مشكلة معروفة). هذه هي نقطة «قبل» التي ستُقارن بها
+كل مراحل Fluent؛ وصورة جديدة من بناء اليوم ستؤكدها عند أول إقلاع.
+**قرار (2026-11-22، ردًا على سؤال المستخدم: هل التثبيت شرط؟): التثبيت ليس شرطًا
+للتعديل.** تعديل الاستايل (المرحلة 7 وباقي المراحل) لا ينتظر اكتمال التثبيت الكامل
+على `k.raw`. الحلقة السريعة المعتمدة: بناء تدريجي للملف المتغير فقط (مثلًا
+`ninja explorer` ثم `ninja bootcd` لتحديث الـ ISO)، ثم الاختبار من النسخة الحية
+(LiveCD boot من `bootcd.iso`) أو بنسخ الملف داخل القرص بـ `mcopy` وإعادة الإقلاع،
+وتصوير النتيجة. التثبيت الكامل على `k.raw` يبقى خطوة لاحقة للتحقق النهائي فقط،
+وليس عائقًا أمام بدء المرحلة 7.
+
+## التعريفات (Drivers) في Kush 1.1
+
+الهدف: تعريفات قياسية جوّا النظام للماوس والكيبورد وكرت الشاشة والهاردسكات (HDD، SSD، NVMe)،
+وحل مشكلة رجفة الماوس. كل مرحلة بتترفع في `main` مع توثيقها هنا.
+
+### الوضع قبل الشغل (فحص المصدر والـ ISO)
+
+| النوع | التعريف | موجود في النظام؟ |
+|-------|---------|------------------|
+| كيبورد PS/2 + ماوس/تاتشباد PS/2 | `i8042prt` + `kbdclass` + `mouclass` | ✅ |
+| كيبورد وماوس USB | `usbxhci`/`usbehci`/`usbohci`/`usbuhci` + `hidusb` + `kbdhid` + `mouhid` | ✅ |
+| ماوس serial | `sermouse` | ✅ |
+| كرت الشاشة (قياسي) | `vgapnp.sys` (VBE + UEFI GOP، مع تصليح Kush) + `vga.sys` + `framebuf.dll` | ✅ |
+| HDD/SSD بنظام SATA (AHCI) | `storahci` (Kush فعّله) | ✅ |
+| HDD/SSD بنظام IDE | `pciide` + `uniata` + `atapi` | ✅ |
+| فلاشات وهاردسكات USB | `usbstor` | ✅ |
+| **SSD بنظام NVMe** | **ما في** ← اتضاف `nvme.sys` (المرحلة 2) | ❌ ← ✅ |
+| تاتشباد I2C (لابتوبات حديثة) | ما في (`hidi2c`) | ❌ |
+
+### المرحلة 1: رجفة الماوس (الماوس بيهتز في مكانه وبيقفز) ✅
+
+**الأعراض (من المستخدم):** الماوس بيعمل اهتزاز، وفي مكانه، وبيقفز من محل لمحل.
+
+**السبب (في `drivers/input/i8042prt`):** ماوس/تاتشباد PS/2 بيرسل كل حركة كـ packet من 3 أو 4 bytes.
+لو byte واحد ضاع، الـ driver بيقرا الـ bytes الجاية في غير مكانها (byte الـ X كأنه أزرار، والـ Y كأنه X)،
+فبتطلع حركات كبيرة غلط (قفز) وضغطات وهمية:
+1. **زمن إعادة المزامنة كان 2 ثانية** (`DefaultMouseSynchIn100ns = 20000000`)، يعني الـ stream بيفضل
+   غلط طول ما الماوس بيتحرك، وما بيتصلّح إلا لما يقيف ثانيتين.
+2. **فحص أول byte ضعيف:** بيفحص bit 3 بس، فأي byte فيه البت ده بيتقبل كبداية packet.
+
+**التصليح:**
+- `registry.c`: زمن إعادة المزامنة بقى **50 ms** (bytes الـ packet الواحد بتجي في أقل من كده).
+- `mouse.c`: لو أول byte فيه bits الـ overflow (6 و 7) مرفوعة، ده غالبًا byte في غير مكانه، فبنتجاهله
+  وبنزامن مع الجاي (زي `psmouse` في Linux).
+
+**الفحص:**
+| الفحص | النتيجة |
+|-------|---------|
+| بناء `i8042prt.sys` | ✅ بدون أخطاء |
+| تثبيته على Kush في QEMU والإقلاع | ✅ |
+| تحريك الماوس للركن ثم +200 يمين و +100 تحت | ✅ المؤشر وصل (200، 100) بالضبط، ما في قفز (`docs/drivers/01-mouse-after-fix-exact-position.png`) |
+| الرجفة نفسها | ⏳ ما بتظهر في QEMU (الماوس المحاكي ما بيضيّع bytes)، **التأكيد النهائي على جهاز الـ Acer** |
+
+### المرحلة 2: تعريف NVMe (للـ SSD من نوع NVMe M.2): شغّال، والنظام بيقلع من NVMe ✅
+
+**المصدر:** تعريف **OpenFabrics Alliance NVMe for Windows** (OFA nvmewin، رخصة BSD من Intel و IDT و LSI)
+من `github.com/gigaherz/nvmewin`. ده StorPort miniport (نفس نوع `storahci`)، وحطيناه في
+`drivers/storage/port/nvme/` (~21,000 سطر).
+
+**التعديلات عشان يتبني بأدوات Kush/ReactOS:**
+| المشكلة | التصليح |
+|---------|---------|
+| WPP tracing (`*.tmh`، `DoTraceMessage`) ما موجود | `nvme_tracing.h` بقى stubs، وملفات `.tmh` فاضية |
+| `nvmeMofData.h` بيتولّد من MOF بأداة `wmimofck` | كتبته يدوي من `nvmeMofData.mof` (GUIDs وهياكل WMI) |
+| تعارض `srb.h` مع `storport.h` | `precomp.h` بيعرّف `_NTSRB_` قبل `scsiwmi.h` |
+| أنواع SAL (`HW_STARTIO`، `HW_TIMER_EX`…) ما موجودة | معرّفة في `precomp.h` |
+| التعريف بيستهدف StorPort بتاع Windows 8 | `precomp.h` بيعرّف `NTDDI_VERSION = Win8` |
+| `__try/__finally` بتاع MSVC | اتحوّلت لـ PSEH (`_SEH2_TRY/_SEH2_FINALLY/_SEH2_END`) |
+| أنواع الإرجاع (`SNTI_STATUS`) و `DriverEntry` ما متطابقة مع GCC | اتصلّحت |
+| `nvme.rc` بيضمّن ملف MOF مترجم (`.bmf`) | `nvme.rc` جديد بنمط ReactOS (الأصلي محفوظ في `nvme_ofa_original.rc.txt`) |
+| `StorPortQuerySystemTime` و `memcpy_s` و `ScsiPortWmi*` ما بتتربط | `kush_compat.c` (WMI بيرجع "غير مدعوم"، والتخزين ما محتاجه) |
+
+**التسجيل في النظام:**
+- `txtsetup.sif`: نسخ `nvme.sys`، و `PCI\CC_010802 = nvme` (فئة NVMe: class 01، subclass 08، prog-if 02)، و `nvme = nvme.sys` في `[SCSI.Load]`.
+- `hivesys.inf`: `CriticalDeviceDatabase\PCI#CC_010802` → `nvme`، و service `nvme` (Start=0، Group "SCSI Miniport").
+
+**التجربة: برنامج تثبيت Kush في QEMU مع قرص NVMe بس (`-device nvme`، 8 GB)، وكل مشكلة وحلها:**
+| # | النتيجة / سجل الـ serial | السبب | التصليح |
+|---|--------------------------|-------|---------|
+| 1 | ❌ "Setup could not find a harddisk" (`docs/drivers/02-nvme-setup-no-disk-before.png`)، والسجل وقف عند `NVMeEnumNumaCores: Failed to retrieve number of group` | StorPort بتاع Kush ما بيطبّق `StorPortExtendedFunction` لمجموعات المعالجات و NUMA وغيرها | `storport.c`: أضفت `GetCurrentProcessorNumber` و `GetActiveGroupCount` و `GetGroupAffinity` و `GetActiveNodeCount` و `GetNodeAffinity` و `GetHighestNodeNumber` و `AllocateContiguousMemorySpecifyCacheNode` و `FreeContiguousMemorySpecifyCache` و `FreeTimer` و `Acquire/ReleaseMSISpinLock` |
+| 2 | ❌ STOP 0x7E في `storport.sys!PortFdoPnp+0x331` | `IoConnectInterruptEx` في الـ kernel بيرجع نجاح لـ MSI **من غير ما يعمل حاجة** ("UNIMPLEMENTED")، و StorPort بيقرا جدول MSI وهو NULL. **(الباق ده كان ممكن يضرب `storahci` كمان)** | `fdo.c`: لو الجدول NULL ده "ما في MSI"، وبنرجع لـ line interrupt عادي |
+| 3 | ❌ `NVMeDriverFatalError` error 0x2 في state 37 (Set Features) | الـ controller رفض **Interrupt Coalescing** (اختياري في مواصفات NVMe)، والتعريف بيعتبره خطأ قاتل | `nvmeInit.c`: بقى تحذير والتشغيل بيكمّل |
+| 4 | ❌ error 0x4 (`QUEUE_ALLOC_FAILURE`)، و `CDW11 = 0xFFFFFFFF` | بدون MSI (`Msg granted=0`)، عدد الـ queues = `min(cores, 0) - 1` = **65535**، فالـ controller رفض | `nvmeInit.c`: أقل عدد 1 (interrupt واحد) |
+| 5 | ✅ الـ controller اشتغل: admin queues، RDY، Identify للـ controller والـ namespace، و I/O queue، و `NVMeStartComplete`، و `StorPortReady`. بعدها ❌ النظام وقف في DPC جوّا `StorPortExtendedFunction` ← `KeSetTimerEx` | `ExtFunctionRequestTimer` بيدّي `KeSetTimer` وقت **موجب**، وده تاريخ **مطلق** (1601)، فالـ timer بيضرب فورًا كل مرة، والتعريف بيعيد تشغيله كل ثانية من جوّا الـ callback: حلقة DPC بلا نهاية | `storport.c`: الوقت بقى سالب (نسبي) |
+| 6 | ❌ STOP 0x7E في `storport.sys!PortPdoIssueRequest` عند أول قراءة من القرص | `DmaAdapter` = NULL: StorPort بيعمله بس جوّا `StorPortGetUncachedExtension`، وتعريف NVMe ما بيناديها | `fdo.c`: إنشاء الـ DMA adapter بعد `HwFindAdapter` (PASSIVE_LEVEL) من `PortConfig` |
+| 7 | ✅ **REPORT LUNS و INQUIRY و READ CAPACITY اشتغلوا** (`LastLBA=0xffffff`، 512 byte = 8 GB)، و**برنامج التثبيت شاف القرص**: "8189 MB Harddisk 0 [RAW]"، "Unpartitioned space 8188 MB" (`docs/drivers/03-nvme-setup-disk-found.png`) | | |
+
+| 8 | ✅ **الكتابة على NVMe شغّالة:** برنامج التثبيت عمل partition (MBR، FAT32، 8188 MB) وهيّأه، وبدأ ينسخ ملفات النظام (27% بعد 5 دقايق في QEMU) (`docs/drivers/04-nvme-setup-copying-files.png`) | | |
+
+| 9 | ✅ **النسخ خلص، والنظام أعاد التشغيل و قلع من قرص NVMe:** وصل للمرحلة التانية من التثبيت ("Welcome to the ReactOS Setup Wizard")، والشاشة مكتوب فيها `C:\ReactOS` (`docs/drivers/05-nvme-booted-installed-system.png`). السجل فيه `NVMeRunning: StorPortReady` **مرتين** (برنامج التثبيت + النظام المثبّت)، والنظام بيقرا ملفاته من `C:\ReactOS` وبيرسل أوامر FLUSH للقرص | | |
+
+**الحالة:** ✅ **تعريف NVMe شغّال بالكامل في QEMU:** بيتعرّف على القرص، وبيكتب ويقرا، وKush بيتثبّت على قرص NVMe و**بيقلع منه**. ⏳ الخطوة الجاية: التجربة على جهاز حقيقي فيه SSD من نوع NVMe.
 
 ## Known notes
 
@@ -332,3 +791,23 @@ InstallShield، 735 MB)، اتوصّل للنظام كـ CD (`D:`) واتشغّ�
 
 ### معيار النجاح
 SPSS 25 يتثبّت، و `stats.exe` يفتح، ويقرأ ملف `.sav`، ويطلع جدول Frequencies.
+
+## خطة تصميم Kush Fluent (شكل حديث زي Windows 11)
+
+الخطة الكاملة في [`docs/design/kush-fluent-plan.md`](docs/design/kush-fluent-plan.md). تصميم أصلي على نفس مبادئ
+Fluent Design، بمصادر مفتوحة (أيقونات Fluent UI System Icons برخصة MIT، وخطوط Selawik و Noto Sans Arabic برخصة OFL)،
+و**كل التعديلات على مستوى النظام**.
+
+| المرحلة | المحتوى | محتاجة compositor؟ |
+|---|---|---|
+| 0 | Design tokens: ألوان فاتح/غامق، accent، زوايا، مسافات (في الـ registry) | لا |
+| 1 | الخطوط: Selawik + Noto Sans Arabic، anti-aliasing | لا |
+| 2 | ثيم `KushFluent.msstyles`: أدوات بزوايا 4px، scrollbars رفيعة، شريط عنوان مسطح | لا |
+| 3 | زوايا دائرية 8px لكل النوافذ والقوائم من win32k، و `DWMWA_WINDOW_CORNER_PREFERENCE` | لا |
+| 4 | **Mica**: صورة الخلفية بعد blur وtint، بتترسم تحت النافذة حسب مكانها | لا |
+| 5أ | **Acrylic ثابت** لشريط المهام وStart والـ flyouts (blur للخلفية + noise + tint) | لا |
+| 5ب | **compositor** حقيقي: Acrylic حي، و `DwmEnableBlurBehindWindow` | **نعم** |
+| 6 | أيقونات Fluent بكل المقاسات، مع الحفاظ على أرقام الأيقونات | لا |
+| 7 | الواجهة: شريط مهام في النص، Start جديد، flyouts | لا |
+| 8 | الوضع الغامق على مستوى النظام (uxtheme ordinals 132–135) | لا |
+| 9 | الحركة: بسيطة من غير compositor، وكاملة بعد 5ب | جزئيًا |
